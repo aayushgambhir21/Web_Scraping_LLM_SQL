@@ -13,9 +13,14 @@ import matplotlib.pyplot as plt
 import textwrap
 import spacy
 from datetime import datetime
+import openai
+import time
 
 # Load the spaCy model
 nlp = spacy.load('en_core_web_sm')
+
+# OpenAI API key (make sure to set your own API key here)
+openai.api_key = 'sk-proj-QKVpaH15mS3fCIyJOnGZT3BlbkFJi8Q8XbwldaOTOfJMMeuW'
 
 def wrap_text(text, width=1.0):
     """Wrap text for better fitting in the node."""
@@ -23,42 +28,39 @@ def wrap_text(text, width=1.0):
 
 def extract_date(text):
     """Extract and parse date from text."""
-    # Define various date patterns
     patterns = [
-        r'\b(?:Updated:|Published:)?\s*(\d{1,2}(?:st|nd|rd|th)? \w+ \d{4})\b',  # e.g., "21st July 2024"
-        r'\b(?:Updated:|Published:)?\s*(\w+ \d{1,2}(?:st|nd|rd|th)?, \d{4})\b',  # e.g., "July 21st, 2024"
-        r'\b(?:Updated:|Published:)?\s*(\d{1,2}-\w{3}-\d{4})\b',  # e.g., "21-Jul-2024"
-        r'\b(?:Updated:|Published:)?\s*(\d{4}-\d{2}-\d{2})\b',  # e.g., "2024-07-21"
-        r'\b(\d{1,2} [A-Za-z]+ \d{4})\b',  # e.g., "21 July 2024"
-        r'\b([A-Za-z]+ \d{1,2}, \d{4})\b',  # e.g., "July 21, 2024"
-        r'\b(\d{2}/\d{2}/\d{4})\b'  # e.g., "07/21/2024"
+        r'\b(?:Updated:|Published:)?\s*(\d{1,2}(?:st|nd|rd|th)? \w+ \d{4})\b',
+        r'\b(?:Updated:|Published:)?\s*(\w+ \d{1,2}(?:st|nd|rd|th)?, \d{4})\b',
+        r'\b(?:Updated:|Published:)?\s*(\d{1,2}-\w{3}-\d{4})\b',
+        r'\b(?:Updated:|Published:)?\s*(\d{4}-\d{2}-\d{2})\b',
+        r'\b(\d{1,2} [A-Za-z]+ \d{4})\b',
+        r'\b([A-Za-z]+ \d{1,2}, \d{4})\b',
+        r'\b(\d{2}/\d{2}/\d{4})\b'
     ]
 
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             date_str = match.group(1)
-            # Normalize the date string by removing suffixes and parsing it
             date_str = re.sub(r'(st|nd|rd|th)', '', date_str).strip()
             try:
-                # Handle different formats
                 try:
-                    date_obj = datetime.strptime(date_str, '%d %B %Y')  # e.g., "21 July 2024"
+                    date_obj = datetime.strptime(date_str, '%d %B %Y')
                 except ValueError:
                     try:
-                        date_obj = datetime.strptime(date_str, '%B %d, %Y')  # e.g., "July 21, 2024"
+                        date_obj = datetime.strptime(date_str, '%B %d, %Y')
                     except ValueError:
                         try:
-                            date_obj = datetime.strptime(date_str, '%d-%b-%Y')  # e.g., "21-Jul-2024"
+                            date_obj = datetime.strptime(date_str, '%d-%b-%Y')
                         except ValueError:
                             try:
-                                date_obj = datetime.strptime(date_str, '%Y-%m-%d')  # e.g., "2024-07-21"
+                                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
                             except ValueError:
                                 try:
-                                    date_obj = datetime.strptime(date_str, '%m/%d/%Y')  # e.g., "07/21/2024"
+                                    date_obj = datetime.strptime(date_str, '%m/%d/%Y')
                                 except ValueError:
                                     return "No Date"
-                return date_obj.strftime('%Y-%m-%d')  # Standard format YYYY-MM-DD
+                return date_obj.strftime('%Y-%m-%d')
             except ValueError:
                 continue
     return "No Date"
@@ -71,14 +73,11 @@ def fetch_article_details(article_url):
         data = page_request.content
         soup = BeautifulSoup(data, "html.parser")
 
-        # Extract the title
         title_tag = soup.find('title')
         title = title_tag.get_text(strip=True) if title_tag else "No Title"
 
-        # Extract the date from various potential locations
         date_text = "No Date"
         
-        # Check common HTML tags for date
         possible_date_tags = [
             soup.find('meta', {'property': 'article:published_time'}),
             soup.find('time'),
@@ -95,7 +94,6 @@ def fetch_article_details(article_url):
                 if date_text != "No Date":
                     break
         
-        # Check anchor tags for additional date information
         if date_text == "No Date":
             anchor_tags = soup.find_all('a', href=True)
             for anchor_tag in anchor_tags:
@@ -103,22 +101,17 @@ def fetch_article_details(article_url):
                 if date_text != "No Date":
                     break
 
-        # Extract the content
         meta_description = soup.find('meta', {'name': 'description'})
         content = meta_description['content'] if meta_description else "No Content"
 
-        # Process content with spaCy
         doc = nlp(content)
         
-        # Extract named entities and categorize them
         people = [ent.text for ent in doc.ents if ent.label_ == 'PERSON']
         organizations = [ent.text for ent in doc.ents if ent.label_ == 'ORG']
         locations = [ent.text for ent in doc.ents if ent.label_ == 'GPE']
         
-        # Extract keywords (for simplicity, we'll use noun chunks)
         keywords = [chunk.text for chunk in doc.noun_chunks]
 
-        # Extract relationships based on sentence parsing
         relationships = []
         for sent in doc.sents:
             ents = [ent.text for ent in sent.ents]
@@ -131,6 +124,54 @@ def fetch_article_details(article_url):
     except requests.RequestException as e:
         print(f"Error fetching article details: {e}")
         return None
+
+def analyze_relationships_with_openai(text, entities):
+    """Use OpenAI API to analyze relationships between entities in the text."""
+    prompt = f"""
+    Analyze the following text and identify any cause-and-effect relationships, 
+    as well as other relationships between the listed entities. 
+    Entities: {', '.join(entities)}
+    
+    Text:
+    {text}
+    
+    Identify relationships in the format: (Entity1, Entity2, Relationship Type)
+    """
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an assistant that helps analyze relationships between entities."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.5
+        )
+        relationships_text = response.choices[0].message['content'].strip()
+        relationships = []
+        for rel in relationships_text.split('\n'):
+            parts = rel.strip().split(', ')
+            if len(parts) == 3:
+                relationships.append(tuple(parts))
+        return relationships
+
+    except openai.error.RateLimitError:
+        print("Rate limit exceeded. Retrying in 60 seconds...")
+        time.sleep(60)  # Wait before retrying
+        return []
+
+    except openai.error.AuthenticationError:
+        print("Authentication error. Please check your API key.")
+        return []
+
+    except openai.error.InvalidRequestError as e:
+        print(f"Invalid request error: {e}")
+        return []
+
+    except openai.error.OpenAIError as e:
+        print(f"OpenAI API error: {e}")
+        return []
 
 def timesofindia():
     """Fetch and process articles from Times of India."""
@@ -149,6 +190,9 @@ def timesofindia():
                     article_url = "https://timesofindia.indiatimes.com" + litag.find('a')['href']
                     details = fetch_article_details(article_url)
                     if details:
+                        all_entities = set(details[4] + details[5] + details[6])  # Combine people, organizations, and locations
+                        openai_relationships = analyze_relationships_with_openai(details[3], all_entities)
+                        
                         articles.append({
                             "url": details[2],
                             "title": details[0],
@@ -158,7 +202,7 @@ def timesofindia():
                             "organizations": details[5],
                             "locations": details[6],
                             "keywords": details[7],
-                            "relationships": details[8]
+                            "relationships": details[8] + openai_relationships  # Concatenate lists
                         })
 
     # Print the details of the articles
@@ -171,16 +215,15 @@ def timesofindia():
         print(f"Organizations: {', '.join(article['organizations'])}")
         print(f"Locations: {', '.join(article['locations'])}")
         print(f"Keywords: {', '.join(article['keywords'])}")
+        print(f"Relationships: {article['relationships']}")  # Added for debugging
         print("-" * 80)
 
-    # Create the graph
     G = nx.Graph()
 
     for article in articles:
-        title_wrapped = wrap_text(article["title"], width=40)  # Adjust width for better wrapping
+        title_wrapped = wrap_text(article["title"], width=40)
         G.add_node(title_wrapped, type="article", title=title_wrapped, date=article["date"])
 
-        # Add people, organizations, and locations as nodes
         for person in article["people"]:
             G.add_node(person, type="person")
             G.add_edge(title_wrapped, person)
@@ -193,23 +236,21 @@ def timesofindia():
             G.add_node(location, type="location")
             G.add_edge(title_wrapped, location)
 
-        # Create relationships between entities
-        for entity1, entity2, sentence in article["relationships"]:
-            if entity1 != entity2:
-                G.add_edge(entity1, entity2, label=sentence)
+        for relationship in article["relationships"]:
+            if len(relationship) == 3:  # Ensure correct unpacking
+                entity1, entity2, sentence = relationship
+                if entity1 != entity2:
+                    G.add_edge(entity1, entity2, label=sentence)
 
-        # Create relationships between articles based on shared keywords
         for keyword in article["keywords"]:
             G.add_node(keyword, type="keyword")
             G.add_edge(title_wrapped, keyword)
 
-    # Position the nodes using a spring layout
-    pos = nx.spring_layout(G, k=1.0)  # Increase the k value to further increase the distance between nodes
+    pos = nx.spring_layout(G, k=1.0)
 
-    plt.figure(figsize=(40, 40))  # Adjust figure size
+    plt.figure(figsize=(40, 40))
     nx.draw(G, pos, with_labels=False, node_size=5000, node_color="skyblue", font_size=6, font_weight="bold", font_family="Arial", edge_color='gray')
 
-    # Adjust text wrapping for better readability
     for node, (x, y) in pos.items():
         plt.text(x, y, node, fontsize=10, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
 
@@ -217,4 +258,3 @@ def timesofindia():
 
 if __name__ == "__main__":
     timesofindia()
-
