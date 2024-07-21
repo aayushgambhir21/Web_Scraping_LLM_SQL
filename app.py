@@ -20,7 +20,7 @@ import time
 nlp = spacy.load('en_core_web_sm')
 
 # OpenAI API key (make sure to set your own API key here)
-openai.api_key = 'sk-proj-QKVpaH15mS3fCIyJOnGZT3BlbkFJi8Q8XbwldaOTOfJMMeuW'
+openai.api_key = 'sk-proj-CfXvgD2EifepCcKl66UxT3BlbkFJ858ydEitsoTSrpva2iZz'
 
 def wrap_text(text, width=1.0):
     """Wrap text for better fitting in the node."""
